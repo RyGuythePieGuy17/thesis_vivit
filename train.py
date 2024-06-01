@@ -1,16 +1,15 @@
-import torch
+import torch, matplotlib
+matplotlib.use('TkAgg')
 
-import numpy as np
 import torch.optim as optim
 import matplotlib.pyplot as plt
 
 from sklearn.metrics import precision_score, recall_score
 from torch import nn
 from tqdm import tqdm
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import random_split
 from dataset_class import Custom_Traffic_Dataset
 from vivit import ViVit
-from torchvision.transforms import Compose, Resize, ToTensor, Normalize, RandomHorizontalFlip, RandomCrop
 
 def main():
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
@@ -30,9 +29,9 @@ def main():
     epochs = 10             # Number of iterations through entirety of Data
     base_lr = 10e-3         # learning rate
     weight_decay = 0.03     # Weight Decay
-    batch_size = 8          # batch size
-    loss_steps = 200
-    val_steps = 1000
+    batch_size = 20         # batch size
+    loss_steps = 10
+    val_steps = 100
     
     print('Loading Model...')
     model = ViVit(num_encoders, latent_size, device, num_heads, num_class, dropout, tube_hw, tube_d, n_channels, batch_size)
@@ -45,14 +44,67 @@ def main():
     
     print('Initializing Dataloader...')
     dataloaders = {x: torch.utils.data.DataLoader(datasets[x], batch_size=batch_size,
-                                            shuffle=True, num_workers=8) for x in ['train','test', 'val']}
+                                            shuffle=True, num_workers=2) for x in ['train','test', 'val']}
 
     print('Setting up training parameters...')
     # Betas used for Adam in paper are 0.9 and 0.999, which are the default in PyTorch
     optimizer = optim.Adam(model.parameters(), lr=base_lr, weight_decay=weight_decay)
     criterion = nn.CrossEntropyLoss()
     scheduler = optim.lr_scheduler.LinearLR(optimizer)
+    
+    # This is to ensure plt.show() is called only once
+    fig, ax = plt.subplots(2, 2, figsize=(10, 16))
+    plt.ion()  # Turn on interactive mode
+    plt.show()
+    plt.pause(0.5)  # Pause to update the plot
+    
+    def update_plots(metrics):
+        nonlocal fig, ax
 
+        # Clear the axes to avoid overlapping plots
+        for row in ax:
+            for a in row:
+                a.clear()
+        
+        # Training Loss
+        if metrics['train_losses']:
+            steps, losses = zip(*metrics['train_losses'])
+            ax[0,0].plot(steps, losses, label='Training Loss')
+            ax[0,0].set_title('Training Loss')
+            ax[0,0].set_xlabel('Step')
+            ax[0,0].set_ylabel('Loss')
+            ax[0,0].legend()
+        
+        # Training Accuracy
+        if metrics['train_accs']:
+            steps, accs = zip(*[(step, acc.cpu().numpy()) for step, acc in metrics['train_accs']])
+            ax[0,1].plot(steps, accs, label='Training Accuracy')
+            ax[0,1].set_title('Training Accuracy')
+            ax[0,1].set_xlabel('Step')
+            ax[0,1].set_ylabel('Accuracy')
+            ax[0,1].legend()
+        
+        # Validation Loss
+        if metrics['val_losses']:
+            steps, losses = zip(*metrics['val_losses'])
+            ax[1,0].plot(steps, losses, label='Validation Loss')
+            ax[1,0].set_title('Validation Loss')
+            ax[1,0].set_xlabel('Step')
+            ax[1,0].set_ylabel('Loss')
+            ax[1,0].legend()
+        
+        # Validation Accuracy
+        if metrics['val_accs']:
+            steps, accs = zip(*[(step, acc.cpu().numpy()) for step, acc in metrics['val_accs']])
+            ax[1,1].plot(steps, accs, label='Validation Accuracy')
+            ax[1,1].set_title('Validation Accuracy')
+            ax[1,1].set_xlabel('Step')
+            ax[1,1].set_ylabel('Accuracy')
+            ax[1,1].legend()
+
+        plt.tight_layout()
+        plt.draw()
+        plt.pause(0.1)  # Pause to update the plot
 
     #Eval function for readability 
     def evaluate_model(model, dataloader, criterion, device):
@@ -141,6 +193,9 @@ def main():
                     running_loss = 0
                     running_corrects = 0
                     
+                    # Update plots after each training loss step
+                    update_plots(metrics)
+                    
                 if (batch_idx+1)%val_steps == 0:
                     print('Starting Validation...')
                     val_loss, val_acc, val_precision, val_recall = evaluate_model(model, dataloaders['val'], criterion, device)
@@ -167,6 +222,10 @@ def main():
                     if val_recall > best_val_recall:
                         best_val_recall = val_recall
                         save_checkpoint(checkpoint, best_checkpoint_path)
+                    
+                    # Update plots after each training loss step
+                    update_plots(metrics)
+                    
                     model.train()
                     
             scheduler.step()
