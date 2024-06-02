@@ -1,5 +1,5 @@
 import torch, matplotlib
-matplotlib.use('TkAgg')
+#matplotlib.use('TkAgg')
 
 import torch.optim as optim
 import matplotlib.pyplot as plt
@@ -29,22 +29,22 @@ def main():
     epochs = 10             # Number of iterations through entirety of Data
     base_lr = 10e-3         # learning rate
     weight_decay = 0.03     # Weight Decay
-    batch_size = 20         # batch size
+    batch_size = 26         # batch size
     loss_steps = 10
-    val_steps = 100
+    val_steps = 200
     
     print('Loading Model...')
     model = ViVit(num_encoders, latent_size, device, num_heads, num_class, dropout, tube_hw, tube_d, n_channels, batch_size)
     
     print('Loading Dataset...')
-    train_data = Custom_Traffic_Dataset(tube_d, size, n_channels, "/data/thesis_videos", '/data/crash_frame_numbers.txt')
+    train_data = Custom_Traffic_Dataset(tube_d, size, n_channels, "/data/ryan_thesis_ds/thesis_videos", '/data/ryan_thesis_ds/crash_frame_numbers.txt')
     generator1 = torch.Generator().manual_seed(42)      # Set seed so train/test/validate splits remain the same throughout all experiments
     train_data, test_data, val_data = random_split(train_data, [0.64, 0.2, 0.16], generator=generator1)
     datasets = {'train': train_data, 'test': test_data, 'val': val_data}
     
     print('Initializing Dataloader...')
     dataloaders = {x: torch.utils.data.DataLoader(datasets[x], batch_size=batch_size,
-                                            shuffle=True, num_workers=2) for x in ['train','test', 'val']}
+                                            shuffle=True, num_workers=4) for x in ['train','test', 'val']}
 
     print('Setting up training parameters...')
     # Betas used for Adam in paper are 0.9 and 0.999, which are the default in PyTorch
@@ -54,9 +54,6 @@ def main():
     
     # This is to ensure plt.show() is called only once
     fig, ax = plt.subplots(2, 2, figsize=(10, 16))
-    plt.ion()  # Turn on interactive mode
-    plt.show()
-    plt.pause(0.5)  # Pause to update the plot
     
     def update_plots(metrics):
         nonlocal fig, ax
@@ -102,17 +99,17 @@ def main():
             ax[1,1].set_ylabel('Accuracy')
             ax[1,1].legend()
 
-        plt.tight_layout()
+        # Save the figure to a file
         plt.draw()
-        plt.pause(0.1)  # Pause to update the plot
+        plt.savefig('./plot_test1.png')
+        
 
     #Eval function for readability 
     def evaluate_model(model, dataloader, criterion, device):
         model.eval()
         running_loss = 0
         running_corrects = 0
-        all_preds = []
-        all_targets = []
+        TP=TN=FP=FN=0
 
         with torch.no_grad():
             for inputs, targets in tqdm(dataloader, desc='Evaluation Loop'):
@@ -122,13 +119,16 @@ def main():
                 loss = criterion(outputs, targets)
                 running_loss += loss.item()
                 running_corrects += torch.sum(preds == targets.data)
-                all_preds.extend(preds.cpu().numpy())
-                all_targets.extend(targets.cpu().numpy())
+                # Calculate TP, TN, FP, FN
+                TP += ((preds == 1) & (targets == 1)).sum().item()
+                TN += ((preds == 0) & (targets == 0)).sum().item()
+                FP += ((preds == 1) & (targets == 0)).sum().item()
+                FN += ((preds == 0) & (targets == 1)).sum().item()
         
         avg_loss = running_loss / len(dataloader)
         accuracy = running_corrects.double() / len(dataloader.dataset)
-        precision = precision_score(all_targets, all_preds, average='macro')
-        recall = recall_score(all_targets, all_preds, average='macro')
+        precision = TP / (TP + FP) if (TP + FP) > 0 else 0
+        recall = TP / (TP + FN) if (TP + FN) > 0 else 0
 
         return avg_loss, accuracy, precision, recall
     
@@ -160,6 +160,7 @@ def main():
         checkpoint_path = './model1/checkpoint.pth'
         best_checkpoint_path = './model1/best_checkpoint.pth'
         
+
         print(f'Starting Training on Device: {device}...')
         for epoch in tqdm(range(epochs), total=epochs):
             running_loss = 0.0
@@ -208,7 +209,7 @@ def main():
                     
                     print_metrics(epoch, batch_idx, val_loss, val_acc, val_precision, val_recall, phase='Validation')
                     
-                     # Save the most recent checkpoint
+                    # Save the most recent checkpoint
                     checkpoint = {
                     'epoch': epoch,
                     'model_state_dict': model.state_dict(),
@@ -229,6 +230,7 @@ def main():
                     model.train()
                     
             scheduler.step()
+
         return metrics
     
     metrics = train_model(model, dataloaders, datasets, criterion, optimizer, scheduler, device, epochs, loss_steps, val_steps, batch_size)
