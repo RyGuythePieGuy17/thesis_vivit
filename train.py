@@ -1,4 +1,4 @@
-import torch, matplotlib
+import torch, matplotlib, os
 #matplotlib.use('TkAgg')
 
 import torch.optim as optim
@@ -27,7 +27,7 @@ def main():
     #Training Parameters
     dropout = 0.1           # Dropout
     epochs = 10             # Number of iterations through entirety of Data
-    base_lr = 10e-3         # learning rate
+    base_lr = 3e-3         # learning rate
     weight_decay = 0.03     # Weight Decay
     batch_size = 26         # batch size
     loss_steps = 10
@@ -44,7 +44,7 @@ def main():
     
     print('Initializing Dataloader...')
     dataloaders = {x: torch.utils.data.DataLoader(datasets[x], batch_size=batch_size,
-                                            shuffle=True, num_workers=4) for x in ['train','test', 'val']}
+                                            shuffle=True, num_workers=8, drop_last = True) for x in ['train','test', 'val']}
 
     print('Setting up training parameters...')
     # Betas used for Adam in paper are 0.9 and 0.999, which are the default in PyTorch
@@ -101,7 +101,7 @@ def main():
 
         # Save the figure to a file
         plt.draw()
-        plt.savefig('./plot_test1.png')
+        plt.savefig('./plot_test2.png')
         
 
     #Eval function for readability 
@@ -142,6 +142,10 @@ def main():
 
 
     def save_checkpoint(state, filename):
+        directory = os.path.dirname(filename)
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+            
         torch.save(state, filename)
         
         
@@ -157,8 +161,8 @@ def main():
             'val_recalls': []
         }
         best_val_recall = 0.0
-        checkpoint_path = './model1/checkpoint.pth'
-        best_checkpoint_path = './model1/best_checkpoint.pth'
+        checkpoint_path = './model2/checkpoint.pth'
+        best_checkpoint_path = './model2/best_checkpoint.pth'
         
 
         print(f'Starting Training on Device: {device}...')

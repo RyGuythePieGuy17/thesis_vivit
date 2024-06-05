@@ -9,22 +9,6 @@ def count_frames(video_path):
     cap.release()
     return frame_count
 
-def calculate_segments(num_frames, segment_length):
-    """Calculate the number of segments for a given number of frames and segment length."""
-    return num_frames
-
-def total_segments(vids_path, num_videos, segment_length):
-    total_segments = 0
-    for i in range(num_videos):
-        video_path = os.path.join(vids_path, f'{i}.mp4')  # Assuming video names are like 0.mp4, 1.mp4, etc.
-        frames = count_frames(video_path)
-        segments = calculate_segments(frames, segment_length)
-        total_segments += segments
-    return total_segments
-
-def make_seg_dic(vids_path, num_videos, segment_length):
-    return {str(i): calculate_segments(count_frames(os.path.join(vids_path, f'{i}.mp4')), segment_length) 
-            for i in range(num_videos)}
 
 def make_labels_dic(txt_path):
     with open(txt_path, 'r') as f:
@@ -35,15 +19,6 @@ def make_labels_dic(txt_path):
 
     return {str(label[-1]): label[:-1] for label in labels}
 
-def map_global_idx_to_local_idx(global_index, num_videos, seg_dic):
-    cumulative_segments = 0
-    for video_index in range(num_videos):
-        num_segments = seg_dic[str(video_index)]
-        if cumulative_segments + num_segments > global_index:
-            segment_index = global_index - cumulative_segments
-            return str(video_index), int(segment_index)
-        cumulative_segments += num_segments 
-    raise IndexError("Global index out of range")
 
 def classify_frame(vid_num, frame_num, labels_dic):
     label = labels_dic[vid_num]
@@ -133,16 +108,34 @@ class Custom_Traffic_Dataset(Dataset):
         self.vids_path = vids_path
         self.num_vids =  len(glob.glob(os.path.join(self.vids_path, '*.mp4')))
         self.labels_dic = make_labels_dic(labels_path)
-        self.seg_dic = make_seg_dic(self.vids_path, self.num_vids, self.depth)
+        self.seg_dic = self.make_seg_dic()
+        
+    def make_seg_dic(self):
+        seg_dic = {}
+        for i in range(self.num_vids):
+            video_path = os.path.join(self.vids_path, f'{i}.mp4')
+            frames = count_frames(video_path)
+            seg_dic[str(i)] = []
+            for frame_num in range(frames):
+                frame_class = classify_frame(str(i), frame_num, self.labels_dic)
+                if frame_class == 0 or (frame_class == 1 and frame_num % 2 == 0):  # Skipping logic for class 1
+                    seg_dic[str(i)].append(frame_num)
+        return seg_dic
         
     def __len__(self):
-        return total_segments(self.vids_path, self.num_vids, self.depth)
+        return sum(len(self.seg_dic[str(i)]) for i in range(self.num_vids))
     
     def __getitem__(self, idx):
-        vid_num, frame_num = map_global_idx_to_local_idx(idx, self.num_vids, self.seg_dic)
-        frame_class = classify_frame(vid_num, frame_num, self.labels_dic)
-        frame_class = torch.tensor(frame_class)
-        vid_path = os.path.join(self.vids_path, f'{vid_num}.mp4')
-        vid_tensor = get_frame_sequence(vid_path, frame_num, self.depth, self.size, self.n_channels)
-        
-        return vid_tensor.float(), frame_class
+        cumulative_segments = 0
+        for video_index in range(self.num_vids):
+            num_segments = len(self.seg_dic[str(video_index)])
+            if cumulative_segments + num_segments > idx:
+                local_idx = idx - cumulative_segments
+                frame_num = self.seg_dic[str(video_index)][local_idx]
+                frame_class = classify_frame(str(video_index), frame_num, self.labels_dic)
+                frame_class = torch.tensor(frame_class)
+                vid_path = os.path.join(self.vids_path, f'{video_index}.mp4')
+                vid_tensor = get_frame_sequence(vid_path, frame_num, self.depth, self.size, self.n_channels)
+                return vid_tensor.float(), frame_class
+            cumulative_segments += num_segments
+        raise IndexError('Global Idx out of range')
