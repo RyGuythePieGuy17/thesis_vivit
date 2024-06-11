@@ -67,7 +67,7 @@ def remove_z_pad(frame):
     
     return dpadim
 
-def get_frame_sequence(video_path, frame_number, depth, size, n_channels):
+def get_frame_sequence(video_path, frame_number, depth, size, n_channels, mean, std):
     # Open the video file
     cap = cv2.VideoCapture(video_path)
 
@@ -90,6 +90,10 @@ def get_frame_sequence(video_path, frame_number, depth, size, n_channels):
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame = remove_z_pad(frame)
         frame = cv2.resize(frame, (size, size))
+        
+        # normalization
+        frame = frame / 255.0  # Scale pixel values to [0, 1]
+        frame = (frame - mean) / std  # Normalize with mean and std
         frames.append(frame)
         
     # Release the video capture object
@@ -101,7 +105,7 @@ def get_frame_sequence(video_path, frame_number, depth, size, n_channels):
     return frames_tensor
 
 class Custom_Traffic_Dataset(Dataset):
-    def __init__(self, depth, size, n_channels, vids_path, labels_path):
+    def __init__(self, depth, size, n_channels, vids_path, labels_path, mean, std):
         self.depth = depth
         self.size = size
         self.n_channels = n_channels
@@ -109,6 +113,8 @@ class Custom_Traffic_Dataset(Dataset):
         self.num_vids =  len(glob.glob(os.path.join(self.vids_path, '*.mp4')))
         self.labels_dic = make_labels_dic(labels_path)
         self.seg_dic = self.make_seg_dic()
+        self.mean = mean
+        self.std = std
         
     def make_seg_dic(self):
         seg_dic = {}
@@ -135,7 +141,7 @@ class Custom_Traffic_Dataset(Dataset):
                 frame_class = classify_frame(str(video_index), frame_num, self.labels_dic)
                 frame_class = torch.tensor(frame_class)
                 vid_path = os.path.join(self.vids_path, f'{video_index}.mp4')
-                vid_tensor = get_frame_sequence(vid_path, frame_num, self.depth, self.size, self.n_channels)
+                vid_tensor = get_frame_sequence(vid_path, frame_num, self.depth, self.size, self.n_channels, self.mean, self.std)
                 return vid_tensor.float(), frame_class
             cumulative_segments += num_segments
         raise IndexError('Global Idx out of range')
