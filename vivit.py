@@ -1,14 +1,5 @@
-import torch, einops, torchvision, cv2, glob, os
-
-import numpy as np
-import torch.optim as optim
-import matplotlib.pyplot as plt
-
+import torch, einops
 from torch import nn
-from tqdm import tqdm
-from torch.utils.data import Dataset, DataLoader
-from dataset_class import Custom_Traffic_Dataset
-from torchvision.transforms import Compose, Resize, ToTensor, Normalize, RandomHorizontalFlip, RandomCrop
 
 device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
