@@ -75,14 +75,14 @@ class TemporalEmbedding(nn.Module):
         super(TemporalEmbedding, self).__init__()
         
         # Temporal positional embedding
-        self.temporal_pos_embedding = nn.Parameter(
-            torch.randn(1, num_frames, num_patches+1,latent_size)
-        )
-        
-        # IF I move CLS token before embedding
         # self.temporal_pos_embedding = nn.Parameter(
-        #     torch.randn(1, num_frames, latent_size)
+        #     torch.randn(1, num_frames, num_patches+1,latent_size)
         # )
+        
+        # IF I move CLS token before embedding [B, N, D]
+        self.temporal_pos_embedding = nn.Parameter(
+            torch.randn(1, num_frames, latent_size)
+        )
     
     def forward(self, x):
         # Add temporal positional embedding to x
@@ -148,15 +148,8 @@ class TemporalTransformerEncoder(nn.Module):
         # f = num_frames
         # p = num_patches + 1 (patches + class token)
         # d = latent_size
-        batch_size, num_frames, num_patches, d = x.shape
-        
-        # Reshape to make frames attend to each other
-        # First, make frames the sequence dimension
-        x = einops.rearrange(x, 'b f p d -> (p b) f d')
-         # Then, merge batch and patches to treat each patch position across time as a sequence
-        
-        # Make sequence first for attention: [f, (p*b), d]
-        x = x.transpose(0, 1)
+        #batch_size, num_frames, num_patches, d = x.shape
+    
         
         # Self-attention across frames
         norm_x = self.norm1(x)
@@ -165,12 +158,7 @@ class TemporalTransformerEncoder(nn.Module):
         
         # FFN
         x = x + self.ffn(self.norm2(x))
-        
-        # Restore original shape: [b f p d]
-        x = x.transpose(0, 1)
-        x = einops.rearrange(x, '(p b) f d -> p b f d', b=batch_size)
-        x = einops.rearrange(x, 'p b f d -> b f p d')
-        
+    
         return x, attn_weights
 
 class ViVit(nn.Module):
@@ -197,16 +185,9 @@ class ViVit(nn.Module):
         self.spatial_encStack = nn.ModuleList([SpatialTransformerEncoder(latent_size, num_heads, dropout) for _ in range(self.num_spatial_encoders)])
         self.temporal_encStack = nn.ModuleList([TemporalTransformerEncoder(latent_size, num_heads, dropout) for _ in range(self.num_temporal_encoders)])
         
-        # Sequence attention for classification
-        self.sequence_attention = nn.Sequential(
-            nn.Linear(latent_size, latent_size // 2),
-            nn.Tanh(),  # Bounded activation
-            nn.Linear(latent_size // 2, 1)
-        )
-        
         # Final classification
         self.MLP_head = nn.Sequential(
-            nn.LayerNorm(latent_size * num_frames),
+            nn.LayerNorm(latent_size  * num_frames), # should be latent_size * num_frames if doing all class tokens + patches
             nn.Dropout(dropout),
             nn.Linear(latent_size*num_frames, latent_size),
             nn.GELU(),
@@ -231,16 +212,32 @@ class ViVit(nn.Module):
         # Restore frame dimension with all spatial information
         enc_output = einops.rearrange(enc_output,'p (b f) d -> b f p d', b = self.batch_size)  # Separate batch and frames
         
+        cls_tokens = enc_output[:, :, 0]
+        
         # Add temporal embedding
-        enc_output = self.temporal_embedding(enc_output)
+        enc_output = self.temporal_embedding(cls_tokens)
+        
+        enc_output = einops.rearrange(enc_output,'b f d -> f b d') 
+        
+        
+        # Reshape to make frames attend to each other
+        # First, make frames the sequence dimension
+        # Then, merge batch and patches to treat each patch position across time as a sequence
+        # enc_output = einops.rearrange(enc_output, 'b f p d -> f (p b) d')
         
         # Temporal attention process ALL spatial tokens
         for enc_layer in self.temporal_encStack:
             enc_output, enc_weights = enc_layer(enc_output)
+            
+        enc_output = einops.rearrange(enc_output, 'f b d -> b f d')
+            
+        # Restore original shape: [b f p d]
+        # x = x.transpose(0, 1)
+        # x = einops.rearrange(x, 'f (p b) d -> b f p d', b=self.batch_size)
         
         # Classification token
-        cls_tokens = enc_output[:, :, 0]
-        sequence_repr = einops.rearrange(cls_tokens, 'b f d -> b (f d)')
+        
+        sequence_repr = einops.rearrange(enc_output, 'b f d -> b (f d)')
         
         # # Compute attention weights for each frame
         # attention_logits = self.sequence_attention(cls_tokens)  # [B, 8, 1]
