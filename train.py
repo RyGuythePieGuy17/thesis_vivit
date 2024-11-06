@@ -18,7 +18,7 @@ def main():
     image_size = 384              # Height and width of frame
     tube_hw = 32            # height and width of tubelet, frame size must be divisible by this number
     latent_size = 1024       # Size of embedding,
-    batch_size = 6        # batch size
+    batch_size = 7        # batch size
     
     subst = False
     subst_ratio = 0.001
@@ -34,7 +34,7 @@ def main():
     max_lr = 2e-4          # learning rate
     min_lr = 1e-5
     #TODO: Maybe drop number of accumulated steps
-    accumulated_steps = 37 # number of forward passes before updating weights (Effective batch size = batch_size * accumulated_steps)
+    accumulated_steps = 40 # number of forward passes before updating weights (Effective batch size = batch_size * accumulated_steps)
     #TODO: Reapply regularization
     weight_decay = 0        # Weight Decay
     dropout = 0           # Dropout
@@ -114,6 +114,7 @@ def main():
     
     # Train the model
     metrics = trainer.train(epochs=epochs, batch_size=batch_size, val_steps=val_steps)
+    
 
 if __name__ == '__main__':
     main()
