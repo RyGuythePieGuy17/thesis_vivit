@@ -27,7 +27,7 @@ class VidInputEmbedding(nn.Module):
         # Positional embedding added to patches + cls token
         # Shape: [1, 1, N+1, D] where N+1 accounts for cls token
         self.pos_embedding = nn.Parameter(
-            torch.randn(1, 1, self.num_patch + 1, self.latent_size)
+            torch.randn(1, 1, self.num_patch + 1, 1)
             ).to(device)
     
     def forward(self, input_data):
@@ -66,7 +66,7 @@ class VidInputEmbedding(nn.Module):
         
         # Add positional embedding (Pos embeddings are an offset of existing values not additional tokens)
         # pos_embedding expands from [1, 1, N+1, D] to [B, F, N+1, D] (add same offset to patch in same spatial location irrelevant of frame)
-        linear_projection += self.pos_embedding.expand(batch_size, num_frames, -1, -1)
+        linear_projection += self.pos_embedding.expand(batch_size, num_frames, -1, self.latent_size)
         
         return linear_projection
 
@@ -74,9 +74,11 @@ class TemporalEmbedding(nn.Module):
     def __init__(self, num_frames, latent_size, num_patches, device='cuda'):
         super(TemporalEmbedding, self).__init__()
         
+        self.class_token = nn.Parameter(torch.randn(1, 1, latent_size)).to(device)
+        
         # Temporal positional embedding
         self.temporal_pos_embedding = nn.Parameter(
-            torch.randn(1, num_frames, 1,latent_size)
+            torch.randn(1, num_frames + 1, 1) # One scalar offset per temporal position
         ).to(device)
         
         # IF I move CLS token before embedding [B, N, D]
@@ -85,8 +87,11 @@ class TemporalEmbedding(nn.Module):
         # ).to(device)
     
     def forward(self, x):
+        batch_size, num_frames, latent_size = x.shape
+        class_tokens = self.class_token.expand(batch_size, -1, -1) #[B, 1, D]
+        x = torch.cat((class_tokens, x), dim=1) # [B, F+1, D]
         # Add temporal positional embedding to x
-        return x + self.temporal_pos_embedding.expand(x.shape[0], -1, x.shape[2], -1)
+        return x + self.temporal_pos_embedding.expand(batch_size, -1, x.shape[-1])
 
 class SpatialTransformerEncoder(nn.Module):
     def __init__(self, latent_size=768, num_heads=12, dropout=0.1):
@@ -209,8 +214,10 @@ class ViVit(nn.Module):
         # Restore frame dimension with all spatial information
         enc_output = einops.rearrange(enc_output,'(b f) p d -> b f p d', b = self.batch_size)  # Separate batch and frames
         
+        cls_tokens = enc_output[:, :, 0, :] # b f p d -> b f d (only take class tokens)
+        
         # Add temporal embedding
-        enc_output = self.temporal_embedding(enc_output)
+        enc_output = self.temporal_embedding(cls_tokens) # b f d -> b f+1 d
         
         #enc_output = einops.rearrange(enc_output,'b f d -> f b d') 
         
@@ -218,15 +225,15 @@ class ViVit(nn.Module):
         # Reshape to make frames attend to each other
         # First, make frames the sequence dimension
         # Then, merge batch and patches to treat each patch position across time as a sequence
-        enc_output = einops.rearrange(enc_output, 'b f p d -> (b p) f d')
+        #enc_output = einops.rearrange(enc_output, 'b f p d -> (b p) f d')
         
         # Temporal attention process ALL spatial tokens
         for enc_layer in self.temporal_encStack:
             enc_output, enc_weights = enc_layer(enc_output)
         
-        enc_output = einops.rearrange(enc_output, '(b p) f d -> b f p d', b =self.batch_size)
+        #enc_output = einops.rearrange(enc_output, '(b p) f d -> b f p d', b =self.batch_size)
             
-        cls_tokens = enc_output[:, :, 0, :]
+        cls_tokens = enc_output[:,0,:]
             
         #enc_output = einops.rearrange(enc_output, 'f b d -> b f d')
             
@@ -236,7 +243,7 @@ class ViVit(nn.Module):
         
         # Classification token
         
-        sequence_repr = torch.mean(cls_tokens, dim=1)
+        #sequence_repr = torch.mean(cls_tokens, dim=1)
         
         # # Compute attention weights for each frame
         # attention_logits = self.sequence_attention(cls_tokens)  # [B, 8, 1]
@@ -246,7 +253,7 @@ class ViVit(nn.Module):
         # sequence_repr = (cls_tokens * attention_weights).sum(dim=1)  # [B, D]
 
         # Classification
-        output = self.MLP_head(sequence_repr)
+        output = self.MLP_head(cls_tokens)
         
         return output
     
