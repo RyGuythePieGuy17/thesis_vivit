@@ -179,6 +179,35 @@ class Trainer:
         inputs, targets = batch
         inputs, targets = inputs.to(self.device), targets.to(self.device)   # Put inputs and targets on device
         
+        def check_device_consistency(*tensors, expected_device=self.device):
+            for i, t in enumerate(tensors):
+                if hasattr(t, 'device') and t.device != expected_device:
+                    raise RuntimeError(f"Tensor {i} on wrong device. Expected {expected_device}, got {t.device}")
+        
+        # Check model device
+        model_devices = {p.device for p in self.model.parameters()}
+        if len(model_devices) > 1:
+            raise RuntimeError(f"Model parameters spread across devices: {model_devices}")
+        if next(self.model.parameters()).device != torch.device(self.device):
+            raise RuntimeError(f"Model on {next(self.model.parameters()).device}, expected {self.device}")
+        
+        # Check all tensors
+        check_device_consistency(
+            inputs, 
+            targets,
+            next(self.model.parameters()),
+            expected_device=torch.device(self.device)
+        )
+        
+        if torch.cuda.is_available():
+            if torch.cuda.memory_allocated() > 0.95 * torch.cuda.get_device_properties(0).total_memory:
+                raise RuntimeError("GPU memory usage too high")
+        
+        if not torch.is_tensor(inputs) or not torch.is_tensor(targets):
+            raise ValueError(f"Inputs/targets must be tensors. Got {type(inputs)}/{type(targets)}")
+        if torch.isnan(inputs).any() or torch.isnan(targets).any():
+            raise ValueError("NaN values detected in inputs/targets")
+        
         # Checks to see if needs to handle shorter last accumulated batch
         is_divisible = len(self.dataloaders['train']) % self.accumulated_steps == 0
         
@@ -196,6 +225,11 @@ class Trainer:
             outputs = self.model(inputs)
             # Each loss is scaled by number of accumulated steps in effective batch
             loss = self.criterion(outputs, targets) / actual_accumulation
+        
+        if torch.isnan(outputs).any():
+            raise ValueError("NaN values in model outputs")
+        if not outputs.size(1) == self.model.num_class:  # Add num_classes as class attribute
+            raise ValueError(f"Unexpected output shape: {outputs.shape}")
 
         # calculate prediction based on highest probability
         _, preds = torch.max(outputs, 1)
@@ -209,19 +243,36 @@ class Trainer:
         # Accumulates gradients
         loss.backward()
         
+        # Checks for NaNs in gradients
+        for name, param in self.model.named_parameters():
+            if param.grad is not None:
+                grad_norm = param.grad.norm()
+                if torch.isnan(grad_norm):
+                    print(f"NaN gradient detected in {name}")
+                    raise ValueError("NaN gradient detected")
+        
         # Checks to see if this is the last batch in the dataloader
         is_true_last_batch = batch_idx == len(self.dataloaders['train'])-1
         
         # Checks to see if it has accumulated desired number of steps or is the last effective batch
         if (batch_idx + 1) % self.accumulated_steps == 0 or is_true_last_batch:
             # Gradient clipping
-            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0, error_if_nonfinite=True)
+            # grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0, error_if_nonfinite=True)
             
-            # Raises an error so I can fix if gradients are not clipped properly
-            if not torch.isfinite(grad_norm):
-                self.optimizer.zero_grad()
-                raise ValueError(f"Gradients are not finite. Norm: {grad_norm}")
+            # # Raises an error so I can fix if gradients are not clipped properly
+            # if not torch.isfinite(grad_norm):
+            #     self.optimizer.zero_grad()
+            #     raise ValueError(f"Gradients are not finite. Norm: {grad_norm}")
             
+            grad_norm = torch.stack([p.grad.norm() for p in self.model.parameters() if p.grad is not None])
+        
+
+            print(f"Max gradient norm: {grad_norm.max()}")
+            print(f"Mean gradient norm: {grad_norm.mean()}")
+            print(f"Std gradient norm: {grad_norm.std()}")
+            
+            if grad_norm.max() > 10.0:  # Adjust threshold based on monitoring
+                print("Warning: Large gradients detected")
             # Changes weights
             self.optimizer.step()
             # Resets gradients for next accumulation step
@@ -230,6 +281,10 @@ class Trainer:
             # iters is set so it can handle a dataloader that is not perfectly divisible by accumulated steps so need to handle fraction properly
             # only modifies if len of dataloaders in not perfectly divisble by accumulated steps and is the last batch in dataloader
             self.scheduler.step(epoch + eff_step/self.iters)
+            
+            current_lr = self.optimizer.param_groups[0]['lr']
+            if current_lr < 1e-8:  # Adjust threshold as needed
+                print(f"Warning: Learning rate very low: {current_lr}")
             
             # Calculates effective global step for plotting purposes
             global_step = self.calculate_step(batch_idx, epoch)

@@ -18,7 +18,7 @@ def main():
     image_size = 384              # Height and width of frame
     tube_hw = 32            # height and width of tubelet, frame size must be divisible by this number
     latent_size = 1024       # Size of embedding,
-    batch_size = 7        # batch size
+    batch_size = 3        # batch size
     
     subst = False
     subst_ratio = 0.001
@@ -50,7 +50,7 @@ def main():
     ###Testing Params
     interval = 32
     tube_d = 8             # depth of tubelet, i.e. number of frames back 
-    num_temporal_encoders = 12       # Number of encoders in model
+    num_temporal_encoders = 4       # Number of encoders in model
     n_channels = 1          # R,G,B -> Gray
     
     if n_channels == 3:
