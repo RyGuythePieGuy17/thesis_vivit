@@ -188,13 +188,13 @@ class Trainer:
                 running_loss, running_corrects, global_step, eff_step = self.train_step(batch, batch_idx, batch_size, epoch, running_loss, running_corrects)
                 
                 # # Makes sure model doesn't validate while first effective batch is still being completed
-                # not_first_accum_batch = batch_idx + 1 >= self.accumulated_steps
+                not_first_accum_batch = batch_idx + 1 >= self.accumulated_steps
                 
                 # # Validates every val_steps effective batches. This checks if it has been val_steps.
-                # is_ready_to_validate = ((batch_idx+1)//self.accumulated_steps) % val_steps == 0
-                # if is_ready_to_validate and not_first_accum_batch:
-                #     self.val_step(batch_idx, global_step, eff_step, epoch)  # Validates model
-                #     self.model.train() # Sets model back to train mode (model put into evalution mode in val_step function)
+                is_ready_to_validate = ((batch_idx+1)//self.accumulated_steps) % val_steps == 0
+                if (is_ready_to_validate and not_first_accum_batch) or batch_idx == len(self.dataloaders['train'])-1:
+                    self.val_step(batch_idx, global_step, eff_step, epoch)  # Validates model
+                    self.model.train() # Sets model back to train mode (model put into evalution mode in val_step function)
 
                 # Update plots after each training loss step (short and worth doing for easy live tracking)
                 self.update_plots(self.metrics)

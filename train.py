@@ -34,12 +34,11 @@ def main():
     epochs = 2000             # Number of iterations through entirety of Data
     max_lr = 2e-4          # learning rate
     min_lr = 1e-5
-    #TODO: Maybe drop number of accumulated steps
     accumulated_steps = 40 # number of forward passes before updating weights (Effective batch size = batch_size * accumulated_steps)
     #TODO: Reapply regularization
     weight_decay = 0        # Weight Decay
     dropout = 0           # Dropout
-    val_steps = 214
+    val_steps = 100
 
     #File Management Parameters
     model_num = 1
