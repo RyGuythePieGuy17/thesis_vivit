@@ -1,4 +1,4 @@
-import signal, sys, torch
+import signal, sys, torch, math
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from torch.cuda.amp import autocast
@@ -132,10 +132,38 @@ class Trainer:
                 if param.grad is not None and param.grad.abs().sum().item() != 0:
                     return False
         return True
+    
+    def check_initialization(self, model):
+        print("Weight and Gradient Statistics:")
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                print(f"\n{name}:")
+                # Weight stats
+                print(f"Weight - Mean: {param.data.mean():.6f}")
+                print(f"Weight - Std: {param.data.std():.6f}")
+                print(f"Weight - Max: {param.data.max():.6f}")
+                print(f"Weight - Min: {param.data.min():.6f}")
+                
+                # Check if weights follow approximately normal distribution
+                weight_abs_mean = torch.abs(param.data.mean())
+                weight_std = param.data.std()
+                if weight_abs_mean > 0.1:
+                    print(f"WARNING: Weights mean far from 0 ({weight_abs_mean:.6f})")
+                if weight_std > 1.0:
+                    print(f"WARNING: Weights std too large ({weight_std:.6f})")
+                if weight_std < 0.01:
+                    print(f"WARNING: Weights std too small ({weight_std:.6f})")
+
+                # For attention layers, check scale
+                if 'attn' in name and 'weight' in name:
+                    expected_std = 1/math.sqrt(param.size(1))
+                    if abs(weight_std - expected_std) > expected_std * 0.5:
+                        print(f"WARNING: Attention weight std ({weight_std:.6f}) far from expected ({expected_std:.6f})")
 
     def train(self, epochs, batch_size, val_steps):
         print(f'Starting Training on Device: {self.device}...')
         self.model.train().to(self.device)          # Puts model on device and in train mode
+        self.check_initialization(self.model)
 
         self.optimizer.zero_grad()                  # Ensures optimizer starts with no gradients
         
@@ -267,7 +295,8 @@ class Trainer:
             grad_norm = torch.stack([p.grad.norm() for p in self.model.parameters() if p.grad is not None])
         
 
-            print(f"Max gradient norm: {grad_norm.max()}")
+            print(f"\nMax gradient norm: {grad_norm.max()}")
+            print(f"Min gradient norm: {grad_norm.min()}")
             print(f"Mean gradient norm: {grad_norm.mean()}")
             print(f"Std gradient norm: {grad_norm.std()}")
             

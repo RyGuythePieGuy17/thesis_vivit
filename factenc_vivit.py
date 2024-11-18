@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import einops
 
+
 # Takes (batch size, num frames, height, width, num channels) as input -> returns (batch size, number of tubes, 1D representation of tube)
 class VidInputEmbedding(nn.Module):
     def __init__(self, patch_size=16, num_frames=4, n_channels=3, device='cuda', latent_size=768, batch_size=8, image_size=128):
@@ -83,16 +84,16 @@ class TemporalEmbedding(nn.Module):
         
         # IF I move CLS token before embedding [B, N, D]
         self.temporal_pos_embedding = nn.Parameter(
-            torch.randn(1, num_frames, 1, 1)
+            torch.randn(1, num_frames + 1, 1)
         ).to(device)
     
     def forward(self, x):
-        batch_size, num_frames, num_patches, latent_size = x.shape
-        # class_tokens = self.class_token.expand(batch_size, -1, -1) #[B, 1, D]
-        # x = torch.cat((class_tokens, x), dim=1) # [B, F+1, D]
+        batch_size, num_frames, latent_size = x.shape
+        class_tokens = self.class_token.expand(batch_size, -1, -1) #[B, 1, D]
+        x = torch.cat((class_tokens, x), dim=1) # [B, F+1, D]
         # Add temporal positional embedding to x
         #return x + self.temporal_pos_embedding.expand(batch_size, -1, x.shape[-1])
-        return x + self.temporal_pos_embedding.expand(batch_size, -1, num_patches, latent_size)
+        return x + self.temporal_pos_embedding.expand(batch_size, -1, latent_size)
 
 class SpatialTransformerEncoder(nn.Module):
     def __init__(self, latent_size=768, num_heads=12, dropout=0.1):
@@ -230,32 +231,14 @@ class ViVit(nn.Module):
         
         # Add temporal embedding
         temporal_input = self.temporal_embedding(spatial_cls_tokens)
-                
-        # Take class tokens from spatial output
-        #spatial_cls_tokens = spatial_output[:, :, 0, :] 
-        #print(spatial_cls_tokens.shape)
-        #patches = spatial_output[:, :, 1:, :] # [B F P D] -> [B F P-1 D] Removes class token
-        #print(patches.shape)
-
-        #print(patches.shape)
-        #spatial_output = einops.rearrange(patches, 'b f p d -> b (f p) d')
-        #print(spatial_output.shape)
-        #temporal_input = torch.cat((spatial_cls_tokens, spatial_output), dim=1) # [B, (F * (P-1))+F, D]
-        #print(temporal_input.shape)
-        
-        
-        
-        #temporal_input = self.temporal_embedding(spatial_cls_tokens) # Just adds positional embedding rn# [B F D] -> [B F+1 D]
         
         # Temporal attention process ALL spatial tokens
         for enc_layer in self.temporal_encStack:
             temporal_input, _ = enc_layer(temporal_input)
         
         # Classification
-        temporal_output = temporal_input[:, :num_frames, :]
-        #cls_token = torch.mean(temporal_output, dim=1)
-        cls_token = temporal_output[:,-1,:]
-        #temporal_output = temporal_input[:,0,:] # [B F+1 D] -> [B D]
+        #cls_token = torch.mean(temporal_input, dim=1)
+        cls_token = temporal_input[:,0,:]
         output = self.MLP_head(cls_token)
         
         return output

@@ -10,6 +10,7 @@ from train_class import Trainer
 from factenc_vivit import ViVit, SemiCon_ViVit
 from train_utils import load_vit_weights
 from dataset_class import Custom_Traffic_Dataset
+#from adopt import ADOPT
 
 def main():
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
@@ -18,7 +19,7 @@ def main():
     image_size = 384              # Height and width of frame
     tube_hw = 32            # height and width of tubelet, frame size must be divisible by this number
     latent_size = 1024       # Size of embedding,
-    batch_size = 3        # batch size
+    batch_size = 10        # batch size
     
     subst = False
     subst_ratio = 0.001
@@ -94,7 +95,8 @@ def main():
                                             shuffle=False, num_workers=4, pin_memory=True, persistent_workers = False, drop_last=True) for x in ['train','test', 'val']}
 
     print('Setting up training parameters...')
-    optimizer = torch.optim.Adam(model.parameters(), lr=max_lr, weight_decay=weight_decay)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=max_lr, weight_decay=weight_decay)
+    #optimizer = ADOPT(model.parameters(), lr = max_lr, decoupled = True)
     
     weights = torch.tensor([1/0.47, 1/0.53])
     class_weights = weights / weights.sum()

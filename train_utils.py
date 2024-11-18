@@ -1,4 +1,4 @@
-import torch, os
+import torch, os, math
 from tqdm import tqdm
 
 #Eval function for readability 
@@ -83,28 +83,57 @@ def load_vit_weights(to_model_dict, from_model_dict, dim):
         
     for key in to_model_dict.keys():
         if 'spatial_encStack' not in key:
-            continue
-        suffix = '.'.join(key.split('.')[-2:])
-        mapped_suffix = key_mapping[suffix]
-        layer_number = key.split('.')[1]
-        
-        if mapped_suffix == None:
-            if suffix.endswith('bias'):
-                q_bias = from_model_dict[f'encoder.layer.{layer_number}.attention.attention.query.bias'][:dim]
-                k_bias = from_model_dict[f'encoder.layer.{layer_number}.attention.attention.key.bias'][:dim]
-                v_bias = from_model_dict[f'encoder.layer.{layer_number}.attention.attention.value.bias'][:dim]
-                
-                weights = torch.cat([q_bias, k_bias, v_bias], dim = 0) 
-            else:
-                q_weight = from_model_dict[f'encoder.layer.{layer_number}.attention.attention.query.weight'][:dim, :dim]
-                k_weight = from_model_dict[f'encoder.layer.{layer_number}.attention.attention.key.weight'][:dim, :dim]
-                v_weight = from_model_dict[f'encoder.layer.{layer_number}.attention.attention.value.weight'][:dim, :dim]
-                
-                weights = torch.cat([q_weight, k_weight, v_weight], dim = 0)
+            # Initialize new weights based on their type
+            if 'temporal_embedding.temporal_pos_embedding' in key:
+                to_model_dict[key] = torch.randn_like(to_model_dict[key]) * 0.02
+            
+            elif 'temporal_encStack' in key:
+                if 'attn' in key and 'weight' in key:
+                    gain = 1/math.sqrt(2)
+                    to_model_dict[key] = torch.nn.init.xavier_uniform_(
+                        torch.empty_like(to_model_dict[key]), gain=gain)
+                elif 'attn' in key and 'bias' in key:
+                    to_model_dict[key] = torch.zeros_like(to_model_dict[key])
+                elif 'ffn' in key and 'weight' in key:
+                    to_model_dict[key] = torch.nn.init.xavier_uniform_(
+                        torch.empty_like(to_model_dict[key]))
+                elif 'ffn' in key and 'bias' in key:
+                    to_model_dict[key] = torch.zeros_like(to_model_dict[key])
+            
+            elif 'MLP_head' in key:
+                if '2.weight' in key:  # First linear layer
+                    gain = 1/math.sqrt(2)
+                    to_model_dict[key] = torch.nn.init.xavier_uniform_(
+                        torch.empty_like(to_model_dict[key]), gain=gain)
+                elif '2.bias' in key:
+                    to_model_dict[key] = torch.zeros_like(to_model_dict[key])
+                elif '6.weight' in key:  # Final layer
+                    to_model_dict[key] = torch.nn.init.xavier_uniform_(
+                        torch.empty_like(to_model_dict[key]))
+                elif '6.bias' in key:
+                    to_model_dict[key] = torch.zeros_like(to_model_dict[key])
         else:
-            weights = from_model_dict[f'encoder.layer.{layer_number}.{mapped_suffix}']
-        
-        to_model_dict[key] = weights
+            suffix = '.'.join(key.split('.')[-2:])
+            mapped_suffix = key_mapping[suffix]
+            layer_number = key.split('.')[1]
+            
+            if mapped_suffix == None:
+                if suffix.endswith('bias'):
+                    q_bias = from_model_dict[f'encoder.layer.{layer_number}.attention.attention.query.bias'][:dim]
+                    k_bias = from_model_dict[f'encoder.layer.{layer_number}.attention.attention.key.bias'][:dim]
+                    v_bias = from_model_dict[f'encoder.layer.{layer_number}.attention.attention.value.bias'][:dim]
+                    
+                    weights = torch.cat([q_bias, k_bias, v_bias], dim = 0) 
+                else:
+                    q_weight = from_model_dict[f'encoder.layer.{layer_number}.attention.attention.query.weight'][:dim, :dim]
+                    k_weight = from_model_dict[f'encoder.layer.{layer_number}.attention.attention.key.weight'][:dim, :dim]
+                    v_weight = from_model_dict[f'encoder.layer.{layer_number}.attention.attention.value.weight'][:dim, :dim]
+                    
+                    weights = torch.cat([q_weight, k_weight, v_weight], dim = 0)
+            else:
+                weights = from_model_dict[f'encoder.layer.{layer_number}.{mapped_suffix}']
+            
+            to_model_dict[key] = weights
     
     return to_model_dict
     
