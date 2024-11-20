@@ -64,9 +64,11 @@ def load_checkpoint(model, optimizer, scheduler, checkpoint_path, device):
     else:
         print(f"No checkpoint found at '{checkpoint_path}'")
         return 0, None
-    
-def load_vit_weights(to_model_dict, from_model_dict, dim):
+
+def load_vit_weights(to_model_dict, from_model_dict, dim, SEED):
     # Load the weights from the ViT model
+    generator = torch.Generator()
+    generator.manual_seed(SEED)
     key_mapping = {
         'attn.in_proj_weight' : None,
         'attn.in_proj_bias':None,
@@ -86,18 +88,24 @@ def load_vit_weights(to_model_dict, from_model_dict, dim):
         if 'spatial_encStack' not in key:
             # Initialize new weights based on their type
             if 'temporal_embedding.temporal_pos_embedding' in key:
-                to_model_dict[key] = torch.randn_like(to_model_dict[key]) * 0.02
+                to_model_dict[key] = torch.randn_like(
+                    to_model_dict[key],
+                    generator=generator
+                    ) * 0.02
             
             elif 'temporal_encStack' in key:
                 if 'attn' in key and 'weight' in key:
                     gain = 1/math.sqrt(2)
                     to_model_dict[key] = torch.nn.init.xavier_uniform_(
-                        torch.empty_like(to_model_dict[key]), gain=gain)
+                        torch.empty_like(to_model_dict[key]),
+                        gain=gain,
+                        generator=generator)
                 elif 'attn' in key and 'bias' in key:
                     to_model_dict[key] = torch.zeros_like(to_model_dict[key])
                 elif 'ffn' in key and 'weight' in key:
                     to_model_dict[key] = torch.nn.init.xavier_uniform_(
-                        torch.empty_like(to_model_dict[key]))
+                        torch.empty_like(to_model_dict[key]),
+                        generator=generator)
                 elif 'ffn' in key and 'bias' in key:
                     to_model_dict[key] = torch.zeros_like(to_model_dict[key])
             
@@ -105,19 +113,22 @@ def load_vit_weights(to_model_dict, from_model_dict, dim):
                 if '2.weight' in key:  # First linear layer
                     gain = 1/math.sqrt(2)
                     to_model_dict[key] = torch.nn.init.xavier_uniform_(
-                        torch.empty_like(to_model_dict[key]), gain=gain)
+                        torch.empty_like(to_model_dict[key]), 
+                        gain=gain,
+                        generator=generator)
                 elif '2.bias' in key:
                     to_model_dict[key] = torch.zeros_like(to_model_dict[key])
                 elif '6.weight' in key:  # Final layer
                     to_model_dict[key] = torch.nn.init.xavier_uniform_(
-                        torch.empty_like(to_model_dict[key]))
+                        torch.empty_like(to_model_dict[key]),
+                        generator=generator)
                 elif '6.bias' in key:
                     to_model_dict[key] = torch.zeros_like(to_model_dict[key])
         else:
             suffix = '.'.join(key.split('.')[-2:])
             mapped_suffix = key_mapping[suffix]
             layer_number = key.split('.')[1]
-            
+   
             if mapped_suffix == None:
                 if suffix.endswith('bias'):
                     q_bias = from_model_dict[f'encoder.layer.{layer_number}.attention.attention.query.bias'][:dim]

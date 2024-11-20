@@ -163,7 +163,7 @@ class Trainer:
     def train(self, epochs, batch_size, val_steps):
         print(f'Starting Training on Device: {self.device}...')
         self.model.train().to(self.device)          # Puts model on device and in train mode
-        self.check_initialization(self.model)
+        #self.check_initialization(self.model)
 
         self.optimizer.zero_grad()                  # Ensures optimizer starts with no gradients
         
@@ -174,7 +174,7 @@ class Trainer:
             # Initializes persistent metric tracking across batches for effective batch metric
             running_loss = 0.0
             running_corrects = 0
-
+            last_val_step = 0
             # Iterate through each batch in the dataloader
             for batch_idx, batch in enumerate(tqdm(self.dataloaders['train'], desc=f'Training Loop {epoch}')):
                 # If initialized from checkpoint skip batches until at right batch_idx
@@ -188,11 +188,12 @@ class Trainer:
                 running_loss, running_corrects, global_step, eff_step = self.train_step(batch, batch_idx, batch_size, epoch, running_loss, running_corrects)
                 
                 # # Makes sure model doesn't validate while first effective batch is still being completed
-                not_first_accum_batch = batch_idx + 1 >= self.accumulated_steps
+                not_last_val_step = last_val_step != eff_step
                 
                 # # Validates every val_steps effective batches. This checks if it has been val_steps.
-                is_ready_to_validate = ((batch_idx+1)//self.accumulated_steps) % val_steps == 0
-                if (is_ready_to_validate and not_first_accum_batch) or batch_idx == len(self.dataloaders['train'])-1:
+                is_ready_to_validate = eff_step % val_steps == 0
+                if (is_ready_to_validate and not_last_val_step) or batch_idx == len(self.dataloaders['train'])-1:
+                    last_val_step = eff_step
                     self.val_step(batch_idx, global_step, eff_step, epoch)  # Validates model
                     self.model.train() # Sets model back to train mode (model put into evalution mode in val_step function)
 

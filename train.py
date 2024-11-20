@@ -1,5 +1,6 @@
 # Standard Imports
 import torch
+import numpy as np
 
 from torch import nn
 from transformers import ViTModel
@@ -10,10 +11,16 @@ from train_class import Trainer
 from factenc_vivit import ViVit, SemiCon_ViVit
 from train_utils import load_vit_weights
 from dataset_class import Custom_Traffic_Dataset
-#from adopt import ADOPT
 
 def main():
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    SEED = 3000
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    torch.cuda.manual_seed(SEED)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    generator = torch.Generator().manual_seed(SEED)
     
     # Dataset Parameters
     image_size = 384              # Height and width of frame
@@ -67,16 +74,14 @@ def main():
     vit = ViTModel.from_pretrained('google/vit-large-patch32-384')
 
     # Load ViT weights into spatial encoder
-    model_dict = load_vit_weights(model.state_dict(), vit.state_dict(), latent_size)
+    model_dict = load_vit_weights(model.state_dict(), vit.state_dict(), latent_size, SEED)
     model.load_state_dict(model_dict, strict=True)
     del vit, model_dict
     print('Loaded weights successfully')
 
     print('Loading Dataset...')
     train_data = Custom_Traffic_Dataset(tube_d, image_size, n_channels, "/data/ryan_thesis_ds/thesis_videos", '/data/ryan_thesis_ds/crash_frame_numbers.txt', mean, std, interval)
-    generator1 = torch.Generator().manual_seed(42)
-    #TODO: ADD Shuffling
-    train_data, test_data, val_data = random_split(train_data, [0.7, 0.2, 0.1], generator=generator1)
+    train_data, test_data, val_data = random_split(train_data, [0.7, 0.2, 0.1], generator=generator)
     datasets = {'train': train_data, 'test': test_data, 'val': val_data}
     
     if subst:
@@ -90,8 +95,17 @@ def main():
         datasets['train'] = small_train_data
     
     print('Initializing Dataloader...')
-    dataloaders = {x: torch.utils.data.DataLoader(datasets[x], batch_size=batch_size,
-                                            shuffle=False, num_workers=4, pin_memory=True, persistent_workers = False, drop_last=True) for x in ['train','test', 'val']}
+    dataloaders = {x: torch.utils.data.DataLoader(
+        datasets[x],
+        batch_size=batch_size,
+        shuffle=True,
+        generator=generator,
+        num_workers=4,
+        pin_memory=True,
+        persistent_workers = False,
+        drop_last=True,
+        worker_init_fn=lambda worker_id: np.random.seed(SEED + worker_id)
+        ) for x in ['train','test', 'val']}
 
     print('Setting up training parameters...')
     optimizer = torch.optim.AdamW(model.parameters(), lr=max_lr, weight_decay=weight_decay)
