@@ -14,7 +14,7 @@ from dataset_class import Custom_Traffic_Dataset
 
 def main():
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    SEED = 3000
+    SEED = 4000
     np.random.seed(SEED)
     torch.manual_seed(SEED)
     torch.cuda.manual_seed(SEED)
