@@ -1,5 +1,5 @@
 # Standard Imports
-import torch
+import torch, math
 import numpy as np
 
 from torch import nn
@@ -11,6 +11,45 @@ from train_class import Trainer
 from factenc_vivit import ViVit, SemiCon_ViVit
 from train_utils import load_vit_weights
 from dataset_class import Custom_Traffic_Dataset
+
+class AlternatingWarmupCosineScheduler(torch.optim.lr_scheduler._LRScheduler):
+    def __init__(self, optimizer, steps_per_cycle, warmup_fraction=0.1, 
+                 min_lr=0, warmup_start_factor=0.1, last_epoch=-1):
+        """
+        Args:
+            optimizer: The optimizer to modify learning rate for
+            steps_per_cycle: Number of steps in one complete cycle (warmup + cosine)
+            warmup_fraction: Fraction of steps_per_cycle to spend on warmup
+            min_lr: Minimum learning rate during cosine phase
+            warmup_start_factor: Starting lr factor for warmup (0.1 means start at 0.1 * base_lr)
+        """
+        self.steps_per_cycle = steps_per_cycle
+        self.warmup_steps = int(steps_per_cycle * warmup_fraction)
+        self.cosine_steps = steps_per_cycle - self.warmup_steps
+        self.min_lr = min_lr
+        self.warmup_start_factor = warmup_start_factor
+        super().__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        # Calculate which cycle we're in and the step within that cycle
+        current_cycle = self._step_count // self.steps_per_cycle
+        step_in_cycle = self._step_count % self.steps_per_cycle
+        
+        # Check if we're in warmup or cosine phase of the current cycle
+        if step_in_cycle < self.warmup_steps:
+            # Warmup phase
+            warmup_progress = step_in_cycle / self.warmup_steps
+            # Linear warmup from warmup_start_factor to 1
+            factor = self.warmup_start_factor + (1 - self.warmup_start_factor) * warmup_progress
+            return [base_lr * factor for base_lr in self.base_lrs]
+        else:
+            # Cosine phase
+            cosine_progress = (step_in_cycle - self.warmup_steps) / self.cosine_steps
+            return [
+                self.min_lr + (base_lr - self.min_lr) * 
+                (1 + math.cos(math.pi * cosine_progress)) / 2
+                for base_lr in self.base_lrs
+            ]
 
 def main():
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
@@ -26,7 +65,7 @@ def main():
     image_size = 384              # Height and width of frame
     tube_hw = 32            # height and width of tubelet, frame size must be divisible by this number
     latent_size = 1024       # Size of embedding,
-    batch_size = 10        # batch size
+    batch_size = 8        # batch size
     
     subst = False
     subst_ratio = 0.001
@@ -39,12 +78,12 @@ def main():
     
     #Training Parameters     
     epochs = 2000             # Number of iterations through entirety of Data
-    max_lr = 2e-4          # learning rate
-    min_lr = 1e-5
+    max_lr = 1e-4          # learning rate
+    min_lr = 5e-6
     accumulated_steps = 40 # number of forward passes before updating weights (Effective batch size = batch_size * accumulated_steps)
     #TODO: Reapply regularization
-    weight_decay = 0        # Weight Decay
-    dropout = 0           # Dropout
+    weight_decay = 0 # 1e-4        # Weight Decay
+    dropout = 0.2           # Dropout
     val_steps = 100
 
     #File Management Parameters
@@ -53,6 +92,7 @@ def main():
     load_checkpoint_path = f'./model28/checkpoint.pth'
     out_checkpoint_path = f'./results/models/model{model_num}/checkpoint.pth'
     best_checkpoint_path = f'./results/models/model{model_num}/best_checkpoint.pth'
+    epoch_checkpoint_path = f'./results/models/model{model_num}/first_epoch_checkpoint.pth'
     
     ###Testing Params
     interval = 32
@@ -116,16 +156,48 @@ def main():
     class_weights = class_weights.to(device)
     
     criterion = nn.CrossEntropyLoss(weight=class_weights)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer, 
-        T_0= 2,
-        eta_min = min_lr
-    )
     
     iters = len(dataloaders['train']) // accumulated_steps + (1 if len(dataloaders['train']) % accumulated_steps != 0 else 0)
     
+    # num_warmup_steps = int(round(iters * .05))
+    # print(f"Number of warmup steps: {num_warmup_steps}")
+    
+    # warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+    #     optimizer,
+    #     start_factor = 0.1,
+    #     end_factor = 1.0, 
+    #     total_iters = num_warmup_steps
+    # )
+    # # main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    # #     optimizer,
+    # #     T_max = iters * epochs,
+    # #     eta_min = min_lr
+    # # )
+    # main_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+    #     optimizer, 
+    #     T_0= iters,
+    #     T_mult = 5,
+    #     eta_min = min_lr
+    # )
+    
+    # scheduler = torch.optim.lr_scheduler.SequentialLR(
+    #     optimizer,
+    #     schedulers=[warmup_scheduler, main_scheduler],
+    #     milestones=[num_warmup_steps]
+    # )
+    
+    scheduler = AlternatingWarmupCosineScheduler(
+        optimizer,
+        steps_per_cycle=iters,
+        warmup_fraction = 0.1,
+        min_lr=min_lr,
+        warmup_start_factor=0.1
+    )
+    
+    
+    
     # Create Trainer instance
-    trainer = Trainer(model, model_num, dataloaders, criterion, optimizer, scheduler, device, out_checkpoint_path, load_checkpoint_path, best_checkpoint_path, load_from_checkpoint, accumulated_steps, iters)
+    trainer = Trainer(model, model_num, dataloaders, criterion, optimizer, scheduler, device, out_checkpoint_path, load_checkpoint_path, best_checkpoint_path, epoch_checkpoint_path, load_from_checkpoint, accumulated_steps, iters)
     
     # Train the model
     metrics = trainer.train(epochs=epochs, batch_size=batch_size, val_steps=val_steps)

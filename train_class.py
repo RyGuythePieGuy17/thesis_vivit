@@ -9,7 +9,7 @@ from train_utils import evaluate_model, print_metrics, save_checkpoint, load_che
 
 
 class Trainer:
-    def __init__(self, model, model_num, dataloaders, criterion, optimizer, scheduler, device, out_checkpoint_path, load_checkpoint_path, best_checkpoint_path, load_from_checkpoint=False, accumulated_steps = 1, iters = 0):
+    def __init__(self, model, model_num, dataloaders, criterion, optimizer, scheduler, device, out_checkpoint_path, load_checkpoint_path, best_checkpoint_path, epoch_checkpoint_path, load_from_checkpoint=False, accumulated_steps = 1, iters = 0):
         self.model = model
         self.model_num = model_num
         self.dataloaders = dataloaders
@@ -20,6 +20,7 @@ class Trainer:
         self.out_checkpoint_path = out_checkpoint_path
         self.load_checkpoint_path = load_checkpoint_path
         self.best_checkpoint_path = best_checkpoint_path
+        self.epoch_checkpoint_path = epoch_checkpoint_path
         self.load_from_checkpoint = load_from_checkpoint
         self.accumulated_steps = accumulated_steps
         self.iters = iters
@@ -201,6 +202,17 @@ class Trainer:
                 self.update_plots(self.metrics)
 
             self.current_batch_idx = 0  # Resets current batch after epoch is done for checkpointing
+            if epoch == 1:
+                checkpoint = {
+                                'epoch': self.current_epoch,
+                                'model_state_dict': self.model.state_dict(),
+                                'optimizer_state_dict': self.optimizer.state_dict(),
+                                'scheduler_state_dict': self.scheduler.state_dict(),
+                                'batch_idx': self.current_batch_idx,
+                                'metrics': self.metrics
+                            }
+                save_checkpoint(checkpoint, self.epoch_checkpoint_path)
+            
 
         return self.metrics
     
@@ -310,7 +322,7 @@ class Trainer:
             
             # iters is set so it can handle a dataloader that is not perfectly divisible by accumulated steps so need to handle fraction properly
             # only modifies if len of dataloaders in not perfectly divisble by accumulated steps and is the last batch in dataloader
-            self.scheduler.step(epoch + eff_step/self.iters)
+            self.scheduler.step()
             
             current_lr = self.optimizer.param_groups[0]['lr']
             if current_lr < 1e-8:  # Adjust threshold as needed
@@ -347,7 +359,7 @@ class Trainer:
             
         return new_running_loss, new_running_corrects, global_step, eff_step
             
-                     
+             
     def val_step(self, batch_idx, global_step, eff_step, epoch):
         print('Starting Validation...')
         # Performs evaluation. Model put into evaluate mode in evaluate_model function
